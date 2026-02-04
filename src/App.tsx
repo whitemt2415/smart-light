@@ -1,11 +1,32 @@
+//src\App.tsx
 import { useState, useEffect, useMemo } from "react";
-import { database, ref, set, onValue, isFirebaseConnected } from "./firebase";
+import {
+  database,
+  ref,
+  set,
+  onValue,
+  isFirebaseConnected,
+  firebaseError,
+} from "./firebase";
 
 interface LightState {
   [key: string]: boolean;
 }
 
-type ConnectionStatus = "loading" | "connected" | "disconnected";
+type ConnectionStatus = "loading" | "connected" | "disconnected" | "error";
+
+// กำหนด initial status ก่อน component render
+const getInitialStatus = (): ConnectionStatus => {
+  if (firebaseError) return "error";
+  if (isFirebaseConnected && database) return "loading";
+  return "disconnected";
+};
+
+const getInitialError = (): string | null => {
+  if (firebaseError) return firebaseError;
+  if (!isFirebaseConnected || !database) return "Firebase not configured";
+  return null;
+};
 
 function App() {
   const [lights, setLights] = useState<LightState>({
@@ -13,13 +34,14 @@ function App() {
     bedroom: false,
     kitchen: false,
   });
-  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
-    // กำหนดค่าเริ่มต้นตาม Firebase config
-    isFirebaseConnected && database ? "loading" : "disconnected",
+  const [connectionStatus, setConnectionStatus] =
+    useState<ConnectionStatus>(getInitialStatus);
+  const [errorMessage, setErrorMessage] = useState<string | null>(
+    getInitialError,
   );
 
   useEffect(() => {
-    // ถ้าไม่มี Firebase connection ไม่ต้องทำอะไร
+    // ถ้าไม่มี Firebase connection ไม่ต้อง subscribe
     if (!isFirebaseConnected || !database) {
       return;
     }
@@ -30,13 +52,15 @@ function App() {
       lightsRef,
       (snapshot) => {
         setConnectionStatus("connected");
+        setErrorMessage(null);
         if (snapshot.exists()) {
           setLights(snapshot.val());
         }
       },
       (error) => {
         console.error("Firebase read error:", error);
-        setConnectionStatus("disconnected");
+        setConnectionStatus("error");
+        setErrorMessage(error.message || "Connection failed");
       },
     );
 
@@ -67,9 +91,13 @@ function App() {
     () => ({
       loading: { bg: "#fbbf24", text: "⏳ กำลังเชื่อมต่อ..." },
       connected: { bg: "#22c55e", text: "✅ เชื่อมต่อ Firebase แล้ว" },
-      disconnected: { bg: "#ef4444", text: "❌ ไม่สามารถเชื่อมต่อ Firebase" },
+      disconnected: { bg: "#6b7280", text: "⚠️ Firebase ไม่ได้ตั้งค่า" },
+      error: {
+        bg: "#ef4444",
+        text: `❌ Firebase Error: ${errorMessage || "Unknown"}`,
+      },
     }),
-    [],
+    [errorMessage],
   );
 
   return (
@@ -106,6 +134,36 @@ function App() {
         >
           {statusConfig[connectionStatus].text}
         </div>
+
+        {/* Error Details - แสดงเมื่อมี error */}
+        {(connectionStatus === "error" ||
+          connectionStatus === "disconnected") && (
+          <div
+            style={{
+              marginBottom: "20px",
+              padding: "15px",
+              borderRadius: "10px",
+              background: "rgba(255, 255, 255, 0.1)",
+              color: "#fca5a5",
+              fontSize: "12px",
+              fontFamily: "monospace",
+            }}
+          >
+            <p style={{ margin: "0 0 10px 0", fontWeight: "bold" }}>
+              🔧 Debug Info:
+            </p>
+            <p style={{ margin: "2px 0" }}>• Error: {errorMessage || "None"}</p>
+            <p style={{ margin: "2px 0" }}>
+              • Firebase Connected: {String(isFirebaseConnected)}
+            </p>
+            <p style={{ margin: "2px 0" }}>
+              • Database Ready: {String(!!database)}
+            </p>
+            <p style={{ margin: "10px 0 0 0", color: "#93c5fd" }}>
+              💡 ตรวจสอบ GitHub Secrets ว่าใส่ครบและถูกต้อง
+            </p>
+          </div>
+        )}
 
         {/* Light Controls */}
         {Object.entries(lights).map(([room, isOn]) => (
