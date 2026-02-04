@@ -1,10 +1,11 @@
-// src/App.tsx
-import { useState, useEffect } from "react";
-import { database, ref, set, onValue } from "./firebase";
+import { useState, useEffect, useMemo } from "react";
+import { database, ref, set, onValue, isFirebaseConnected } from "./firebase";
 
 interface LightState {
   [key: string]: boolean;
 }
+
+type ConnectionStatus = "loading" | "connected" | "disconnected";
 
 function App() {
   const [lights, setLights] = useState<LightState>({
@@ -12,57 +13,170 @@ function App() {
     bedroom: false,
     kitchen: false,
   });
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>(
+    // กำหนดค่าเริ่มต้นตาม Firebase config
+    isFirebaseConnected && database ? "loading" : "disconnected",
+  );
 
-  // ดึงข้อมูลจาก Firebase แบบ realtime
   useEffect(() => {
+    // ถ้าไม่มี Firebase connection ไม่ต้องทำอะไร
+    if (!isFirebaseConnected || !database) {
+      return;
+    }
+
     const lightsRef = ref(database, "lights");
-    const unsubscribe = onValue(lightsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        setLights(snapshot.val());
-      }
-    });
+
+    const unsubscribe = onValue(
+      lightsRef,
+      (snapshot) => {
+        setConnectionStatus("connected");
+        if (snapshot.exists()) {
+          setLights(snapshot.val());
+        }
+      },
+      (error) => {
+        console.error("Firebase read error:", error);
+        setConnectionStatus("disconnected");
+      },
+    );
+
     return () => unsubscribe();
   }, []);
 
-  // อัพเดทสถานะไฟ
+  const isConnected = connectionStatus === "connected";
+  const isLoading = connectionStatus === "loading";
+
   const toggleLight = (room: string) => {
-    const newState = !lights[room];
-    set(ref(database, `lights/${room}`), newState);
+    if (!isConnected || !database) return;
+
+    try {
+      const newState = !lights[room];
+      set(ref(database, `lights/${room}`), newState);
+    } catch (error) {
+      console.error("Firebase write error:", error);
+    }
   };
 
-  return (
-    <div style={{ padding: "20px", maxWidth: "400px", margin: "0 auto" }}>
-      <h1>🏠 ระบบควบคุมไฟ</h1>
+  const roomNames: { [key: string]: string } = {
+    living_room: "🛋️ ห้องนั่งเล่น",
+    bedroom: "🛏️ ห้องนอน",
+    kitchen: "🍳 ห้องครัว",
+  };
 
-      {Object.entries(lights).map(([room, isOn]) => (
-        <div
-          key={room}
+  const statusConfig = useMemo(
+    () => ({
+      loading: { bg: "#fbbf24", text: "⏳ กำลังเชื่อมต่อ..." },
+      connected: { bg: "#22c55e", text: "✅ เชื่อมต่อ Firebase แล้ว" },
+      disconnected: { bg: "#ef4444", text: "❌ ไม่สามารถเชื่อมต่อ Firebase" },
+    }),
+    [],
+  );
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)",
+        padding: "20px",
+        fontFamily: "sans-serif",
+      }}
+    >
+      <div style={{ maxWidth: "400px", margin: "0 auto" }}>
+        <h1
           style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "15px",
-            margin: "10px 0",
-            borderRadius: "10px",
-            background: isOn ? "#fef3c7" : "#f3f4f6",
+            color: "white",
+            textAlign: "center",
+            marginBottom: "10px",
           }}
         >
-          <span>{room.replace("_", " ").toUpperCase()}</span>
-          <button
-            onClick={() => toggleLight(room)}
+          🏠 Smart Light Control
+        </h1>
+
+        {/* Connection Status */}
+        <div
+          style={{
+            textAlign: "center",
+            marginBottom: "20px",
+            padding: "10px",
+            borderRadius: "10px",
+            background: statusConfig[connectionStatus].bg,
+            color: "white",
+            fontSize: "14px",
+          }}
+        >
+          {statusConfig[connectionStatus].text}
+        </div>
+
+        {/* Light Controls */}
+        {Object.entries(lights).map(([room, isOn]) => (
+          <div
+            key={room}
             style={{
-              padding: "10px 20px",
-              borderRadius: "20px",
-              border: "none",
-              background: isOn ? "#22c55e" : "#ef4444",
-              color: "white",
-              cursor: "pointer",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              padding: "20px",
+              marginBottom: "15px",
+              borderRadius: "15px",
+              background: isOn
+                ? "linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)"
+                : "linear-gradient(135deg, #374151 0%, #1f2937 100%)",
+              boxShadow: isOn
+                ? "0 0 20px rgba(251, 191, 36, 0.4)"
+                : "0 4px 6px rgba(0, 0, 0, 0.3)",
+              transition: "all 0.3s ease",
             }}
           >
-            {isOn ? "💡 ON" : "⚫ OFF"}
-          </button>
-        </div>
-      ))}
+            <span
+              style={{
+                fontSize: "18px",
+                fontWeight: "bold",
+                color: isOn ? "#1f2937" : "#e5e7eb",
+              }}
+            >
+              {roomNames[room] || room}
+            </span>
+
+            <button
+              onClick={() => toggleLight(room)}
+              disabled={!isConnected || isLoading}
+              style={{
+                padding: "12px 24px",
+                borderRadius: "25px",
+                border: "none",
+                background: !isConnected
+                  ? "#6b7280"
+                  : isOn
+                    ? "#22c55e"
+                    : "#ef4444",
+                color: "white",
+                fontSize: "16px",
+                fontWeight: "bold",
+                cursor: isConnected ? "pointer" : "not-allowed",
+                opacity: isConnected ? 1 : 0.6,
+                transition: "all 0.2s ease",
+                boxShadow: isConnected
+                  ? "0 4px 6px rgba(0, 0, 0, 0.2)"
+                  : "none",
+              }}
+            >
+              {isOn ? "💡 ON" : "⚫ OFF"}
+            </button>
+          </div>
+        ))}
+
+        {/* Footer */}
+        <p
+          style={{
+            textAlign: "center",
+            color: "#9ca3af",
+            fontSize: "12px",
+            marginTop: "30px",
+          }}
+        >
+          Smart Light System v1.0
+        </p>
+      </div>
     </div>
   );
 }
